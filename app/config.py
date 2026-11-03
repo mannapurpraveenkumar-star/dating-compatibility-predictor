@@ -4,7 +4,7 @@ Every limit lives here so it can be changed in one place and referenced by tests
 """
 
 from __future__ import annotations
-
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -61,7 +61,7 @@ HEIGHT_COMPARABLE_SIZE_RATIO = 0.7  # faces must be similar in size (similar dis
 
 # ---- Upload limits -------------------------------------------------------
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024          # 10 MB
-MAX_IMAGE_PIXELS = 40_000_000                # 40 megapixels (e.g. 8000 x 5000)
+MAX_IMAGE_PIXELS = 16_000_000                # 16 MP: keeps memory under the free plan's 512 MB
 MIN_IMAGE_SIDE = 64                          # smaller images cannot hold usable faces
 ALLOWED_FORMATS = ("jpeg", "png", "webp")
 
@@ -86,5 +86,5 @@ LOW_CONFIDENCE = 0.75           # detections between SCORE_THRESHOLD and this ar
 # ---- Debug log (features and scores only; never images) -------------------
 # Each analysis appends one JSON line to logs/analysis_log.jsonl so that wrong
 # predictions can be traced to the feature that caused them. Set to False to stop.
-DEBUG_LOG_ENABLED = True
+DEBUG_LOG_ENABLED = os.getenv("DEBUG_LOG", "1") == "1"   # on locally, off on Render (DEBUG_LOG=0)
 DEBUG_LOG_PATH = PROJECT_ROOT / "logs" / "analysis_log.jsonl"
