@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Debug log (features and scores of analysed photos)
+logs/
+
+# Never commit participant data or user photos
+research/*.csv
+!research/pairs_template.csv
+uploads/
+*.report.html
+dating-game-report-*

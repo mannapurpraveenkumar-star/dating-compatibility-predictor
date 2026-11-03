@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>THE DATING GAME</title>
+  <meta name="description" content="Upload a group photo and the app predicts which two people are the most likely pair.">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Gloock&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap header-row">
+      <a class="brand" href="/" aria-label="The Dating Game, home">
+        <svg class="logo" viewBox="0 0 48 44" aria-hidden="true">
+          <!-- a heart drawn as two face-detection corner brackets -->
+          <path d="M24 40 L7 23 A10 10 0 0 1 24 9" />
+          <path d="M24 40 L41 23 A10 10 0 0 0 24 9" />
+          <path class="tick" d="M3 3 h7 M3 3 v7 M45 3 h-7 M45 3 v7" />
+        </svg>
+        <span class="brand-name">THE DATING GAME</span>
+      </a>
+      <span class="version">Photo-only edition, v2.0</span>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="tagline">
+      <div class="hero-copy">
+        <h1 id="tagline">Beauty Is in the Eye of the Beholder</h1>
+        <p class="lede">
+          Can a machine learning model tell whether two people are meant to be together?
+          Upload a group photo and see which two people it picks.
+        </p>
+        <p class="lede-small">
+          The app finds every face, compares every possible pair on how alike they are
+          and how they’re posed, and shows you the single most likely match.
+        </p>
+      </div>
+
+      <form class="upload" id="upload-form" novalidate>
+        <input type="file" id="file-input" name="photo" accept="image/jpeg,image/png,image/webp" class="visually-hidden">
+        <label for="file-input" class="dropzone" id="dropzone">
+          <span class="drop-empty" id="drop-empty">
+            <svg viewBox="0 0 48 48" aria-hidden="true" class="drop-icon">
+              <path d="M8 16 V8 h8 M32 8 h8 v8 M40 32 v8 h-8 M16 40 H8 v-8" />
+              <path d="M24 32 V18 M18 23 l6 -6 6 6" />
+            </svg>
+            <span class="drop-title">Drop a group photo here</span>
+            <span class="drop-hint">or press to choose a file</span>
+            <span class="drop-limits" id="limits">JPEG, PNG or WebP, up to 10 MB</span>
+          </span>
+          <img id="preview" class="preview" alt="Preview of the photo you chose" hidden>
+        </label>
+        <p class="file-name" id="file-name" hidden></p>
+
+        <div class="actions">
+          <button type="submit" class="btn primary" id="analyse-btn" disabled>Analyse Photo</button>
+          <button type="button" class="btn ghost" id="change-btn" hidden>Choose a different photo</button>
+        </div>
+        <p class="status" id="status" role="status" aria-live="polite"></p>
+        <p class="error" id="error" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <section class="results wrap" id="results" hidden aria-labelledby="results-title" tabindex="-1">
+      <div class="results-head">
+        <h2 id="results-title">Your match</h2>
+        <p class="count" id="count-line"></p>
+      </div>
+
+      <div class="match-list" id="match-list"></div>
+      <p class="match-note" id="match-note"></p>
+
+      <figure class="annotated">
+        <img id="annotated" alt="">
+        <figcaption id="annotated-caption"></figcaption>
+      </figure>
+
+      <div class="block" id="gallery-block">
+        <h3>Everyone in the photo</h3>
+        <ol class="gallery" id="gallery"></ol>
+      </div>
+
+      <details class="block age-check" id="age-check">
+        <summary><h3>Check ages</h3></summary>
+        <p class="block-note" id="age-note">
+          Mark who is an adult and who is under 18, then press Find pairs. Your answer always overrides the app’s
+          estimate. People marked under 18 are never matched.
+        </p>
+        <ol class="age-list" id="age-list"></ol>
+        <div class="actions">
+          <button type="button" class="btn primary" id="find-pairs">Find pairs</button>
+        </div>
+      </details>
+
+      <div class="actions">
+        <button type="button" class="btn primary" id="download-html">Download report</button>
+        <button type="button" class="btn ghost" id="download-md">Download as Markdown</button>
+        <button type="button" class="btn ghost" id="again-btn">Upload another photo</button>
+      </div>
+    </section>
+
+    <section class="honesty wrap" aria-labelledby="honesty-title">
+      <h2 id="honesty-title">How the match works</h2>
+      <div class="honesty-grid">
+        <div>
+          <h3 class="can">What it reads</h3>
+          <ul>
+            <li>Estimated age and apparent gender</li>
+            <li>Height in the photo and outfit colour</li>
+            <li>How close people stand and whether they lean in</li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="cannot">How it decides</h3>
+          <p>
+            Every possible man–woman pair gets a score out of 100 for how alike the two people are and how they’re posed.
+            The best pairs are picked without using anyone twice, so a photo with two couples gives two pairs.
+            It’s an experiment, not proof: friends pose close together too.
+          </p>
+        </div>
+        <div>
+          <h3>Safeguards and privacy</h3>
+          <ul>
+            <li>Skin colour is never used</li>
+            <li>Anyone who may be under 18 is never matched, and nor is anyone whose face is too small to check</li>
+            <li>Nobody is identified, and your photo isn’t saved. Only the measurements are logged on this computer, to help fix mistakes.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>The Dating Game is an academic machine learning project. Face detection uses YuNet from the OpenCV Model Zoo; age and expression models come from the ONNX Model Zoo.</p>
+    </div>
+  </footer>
+
+  <script src="/static/script.js" defer></script>
+</body>
+</html>
