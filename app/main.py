@@ -6,6 +6,7 @@ Run (from F:\\THE_DATING_GAME):
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -17,8 +18,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from app import __version__, config, debuglog
-from app.analysis import analyse
-from app.attributes import age_model, age_regressor, expression_model
+from app.analysis import analyse_photos
+from app.attributes import age_model, age_regressor, attractiveness_model, expression_model
+from app.identity import recognizer
+from app.matching import MIN_MATCH_SCORE, factor_catalogue
 from app.report import build_html, build_markdown
 from app.vision import (
     VisionError,
@@ -36,7 +39,7 @@ log = logging.getLogger("dating_game")
 app = FastAPI(
     title="The Dating Game",
     version=__version__,
-    description="Detects faces in a group photo and predicts the most likely pair.",
+    description="Detects faces in one or more group photos, rates every pair and predicts likely couples.",
 )
 app.mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static")
 
@@ -68,11 +71,14 @@ def health():
         "detector_ready": detector_ready,
         "age_model": age_model.available and age_regressor.available,
         "expression_model": expression_model.available,
+        "attractiveness_model": attractiveness_model.available,
+        "same_person_model": recognizer.available,
         "detector_error": detector_error,
         "limits": {
             "max_upload_mb": config.MAX_UPLOAD_BYTES // (1024 * 1024),
             "max_megapixels": config.MAX_IMAGE_PIXELS // 1_000_000,
             "formats": list(config.ALLOWED_FORMATS),
+            "max_photos": config.MAX_PHOTOS,
         },
     })
 
@@ -91,23 +97,43 @@ def parse_age_answers(adults: str | None, children: str | None) -> dict[str, str
     return answers
 
 
-def _process(data: bytes, age_answers: dict[str, str] | None = None) -> dict:
+def parse_weights_field(raw: str | None) -> dict | None:
+    """The optional "weights" form field: JSON like {"age": 40, "closeness": 0}."""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _process(datas: list[bytes], age_answers: dict[str, str] | None = None,
+             weights: dict | None = None) -> dict:
     """CPU-bound work, run in a worker thread. Everything stays in memory."""
-    decoded = decode_image(data)
-    detection = get_detector().detect(decoded.image)
-    result = analyse(decoded, detection, age_answers)
+    photos = []
+    for i, data in enumerate(datas):
+        try:
+            decoded = decode_image(data)
+        except VisionError as exc:
+            if len(datas) > 1:
+                exc.message = f"Photo {i + 1}: {exc.message}"
+            raise
+        photos.append((decoded, get_detector().detect(decoded.image)))
+    result = analyse_photos(photos, age_answers, weights)
 
     pairs = [p["pair"] for p in result["prediction"]["pairs"]]
     matched = {label for pair in pairs for label in pair}
-    annotated = to_data_url(annotate(decoded.image, detection.faces, highlight=pairs or None),
-                            fmt="jpeg", quality=88)
+    annotated = [to_data_url(annotate(decoded.image, det.faces, highlight=pairs or None), fmt="jpeg", quality=88)
+                 for decoded, det in photos]
     crops = [
-        {"label": f.label, "letter": f.letter, "in_pair": f.label in matched,
+        {"label": f.label, "letter": f.letter, "photo": f.photo + 1, "in_pair": f.label in matched,
          "colour": ("#b3204f" if f.label in matched else "#968c96") if pairs else colour_hex(f.index),
-         "image": to_data_url(crop_face(decoded.image, f), fmt="png")}
-        for f in detection.faces
+         "image": to_data_url(crop_face(photos[f.photo][0].image, f), fmt="png")}
+        for _, det in photos for f in det.faces
     ]
-    result["annotated_image"] = annotated
+    result["annotated_images"] = annotated
+    result["annotated_image"] = annotated[0]
     result["crops"] = crops
     result["log_id"] = debuglog.record(result)   # features and scores only, never the image
     result["report_markdown"] = build_markdown(result)
@@ -115,47 +141,58 @@ def _process(data: bytes, age_answers: dict[str, str] | None = None) -> dict:
     return result
 
 
+@app.get("/api/factors")
+def factors():
+    """The pair factors and their default weights (for the website's sliders)."""
+    return JSONResponse({"factors": factor_catalogue(), "min_match_score": MIN_MATCH_SCORE})
+
+
 @app.post("/api/analyse")
 async def analyse_photo(request: Request):
     started = time.perf_counter()
+    max_total = config.MAX_UPLOAD_BYTES * config.MAX_PHOTOS
 
     declared = request.headers.get("content-length")
-    if declared and declared.isdigit() and int(declared) > config.MAX_UPLOAD_BYTES + FORM_OVERHEAD:
+    if declared and declared.isdigit() and int(declared) > max_total + FORM_OVERHEAD:
         raise _error(413, "file_too_large",
-                     f"The file is larger than the {config.MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit.")
+                     f"The upload is larger than {config.MAX_PHOTOS} x {config.MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
 
     if "multipart/form-data" not in request.headers.get("content-type", ""):
         raise _error(400, "bad_request", "Send the photo as multipart/form-data in a field named 'photo'.")
     try:
-        form = await request.form(max_files=1, max_fields=10)
+        form = await request.form(max_files=config.MAX_PHOTOS + 1, max_fields=20)
     except Exception:  # malformed multipart body
         raise _error(400, "bad_request", "The upload could not be read. Please try again.")
 
-    upload = form.get("photo")
-    adults, children = form.get("adults"), form.get("children")
+    uploads = [u for u in form.getlist("photo") if not isinstance(u, str) and hasattr(u, "read")]
+    adults, children, weights_raw = form.get("adults"), form.get("children"), form.get("weights")
     age_answers = parse_age_answers(adults if isinstance(adults, str) else None,
                                     children if isinstance(children, str) else None)
-    if upload is None or isinstance(upload, str) or not hasattr(upload, "read"):
+    weights = parse_weights_field(weights_raw if isinstance(weights_raw, str) else None)
+    if not uploads:
         await form.close()
         raise _error(400, "missing_file", "No photo was uploaded. Choose a JPEG, PNG or WebP image.")
+    if len(uploads) > config.MAX_PHOTOS:
+        await form.close()
+        raise _error(400, "too_many_photos", f"Upload at most {config.MAX_PHOTOS} photos at once.")
 
     try:
-        data = await upload.read(config.MAX_UPLOAD_BYTES + 1)
+        datas = [await u.read(config.MAX_UPLOAD_BYTES + 1) for u in uploads]
     finally:
         await form.close()  # releases any spooled temporary file immediately
 
     try:
-        result = await run_in_threadpool(_process, data, age_answers)
+        result = await run_in_threadpool(_process, datas, age_answers, weights)
     except VisionError as exc:
-        log.info("Rejected upload: %s (%d bytes)", exc.code, len(data))
+        log.info("Rejected upload: %s (%d photos)", exc.code, len(datas))
         raise _error(exc.status_code, exc.code, exc.message)
     except Exception as exc:  # never crash the server on one bad photo
         log.error("Unexpected analysis failure: %s", type(exc).__name__)
         raise _error(500, "internal_error", "Something went wrong while analysing the photo. Please try another image.")
     finally:
-        del data
+        del datas
 
-    log.info("Analysed photo: %d faces, %d pairs compared, %d predicted, %.0f ms",
-             result["face_count"], result["pair_count"], len(result["prediction"]["pairs"]),
-             (time.perf_counter() - started) * 1000)
+    log.info("Analysed %d photo(s): %d faces, %d pairs compared, %d predicted, %.0f ms",
+             len(result["images"]), result["face_count"], result["pair_count"],
+             len(result["prediction"]["pairs"]), (time.perf_counter() - started) * 1000)
     return JSONResponse(result, headers=NO_STORE)

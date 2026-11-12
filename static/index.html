@@ -35,33 +35,33 @@
         <h1 id="tagline">Beauty Is in the Eye of the Beholder</h1>
         <p class="lede">
           Can a machine learning model tell whether two people are meant to be together?
-          Upload a group photo and see which two people it picks.
+          Upload a group photo, or several photos, and see which people it pairs up.
         </p>
         <p class="lede-small">
-          The app finds every face, compares every possible pair on how alike they are
-          and how they’re posed, and shows you the single most likely match.
+          The app finds every face, rates every possible pair on each factor, and shows the likely
+          couples, the ratings behind them, and sliders to change what counts.
         </p>
       </div>
 
       <form class="upload" id="upload-form" novalidate>
-        <input type="file" id="file-input" name="photo" accept="image/jpeg,image/png,image/webp" class="visually-hidden">
+        <input type="file" id="file-input" name="photo" accept="image/jpeg,image/png,image/webp" multiple class="visually-hidden">
         <label for="file-input" class="dropzone" id="dropzone">
           <span class="drop-empty" id="drop-empty">
             <svg viewBox="0 0 48 48" aria-hidden="true" class="drop-icon">
               <path d="M8 16 V8 h8 M32 8 h8 v8 M40 32 v8 h-8 M16 40 H8 v-8" />
               <path d="M24 32 V18 M18 23 l6 -6 6 6" />
             </svg>
-            <span class="drop-title">Drop a group photo here</span>
-            <span class="drop-hint">or press to choose a file</span>
-            <span class="drop-limits" id="limits">JPEG, PNG or WebP, up to 10 MB</span>
+            <span class="drop-title">Drop group photos here</span>
+            <span class="drop-hint">or press to choose one or more photos</span>
+            <span class="drop-limits" id="limits">JPEG, PNG or WebP, up to 5 photos of 10 MB each</span>
           </span>
-          <img id="preview" class="preview" alt="Preview of the photo you chose" hidden>
+          <span class="preview-strip" id="preview-strip" hidden></span>
         </label>
         <p class="file-name" id="file-name" hidden></p>
 
         <div class="actions">
           <button type="submit" class="btn primary" id="analyse-btn" disabled>Analyse Photo</button>
-          <button type="button" class="btn ghost" id="change-btn" hidden>Choose a different photo</button>
+          <button type="button" class="btn ghost" id="change-btn" hidden>Choose different photos</button>
         </div>
         <p class="status" id="status" role="status" aria-live="polite"></p>
         <p class="error" id="error" role="alert" hidden></p>
@@ -77,13 +77,38 @@
       <div class="match-list" id="match-list"></div>
       <p class="match-note" id="match-note"></p>
 
-      <figure class="annotated">
-        <img id="annotated" alt="">
-        <figcaption id="annotated-caption"></figcaption>
-      </figure>
+      <details class="block panel" id="weights-panel" open>
+        <summary><h3>Importance of each factor</h3></summary>
+        <p class="block-note">
+          Set how much each factor counts, then press Recalculate. 0 switches a factor off; it is still rated below.
+        </p>
+        <div class="presets">
+          <button type="button" class="btn ghost small" id="preset-similarity">Similarity only</button>
+          <button type="button" class="btn ghost small" id="preset-position">Include position in photo</button>
+        </div>
+        <div class="weight-list" id="weight-list"></div>
+        <div class="actions">
+          <button type="button" class="btn primary" id="recalc">Recalculate</button>
+        </div>
+      </details>
+
+      <div class="annotated-list" id="annotated-list"></div>
+
+      <details class="block panel" id="ratings-panel" open>
+        <summary><h3>All ratings</h3></summary>
+        <h4>Each person</h4>
+        <p class="block-note" id="attr-note"></p>
+        <div class="table-scroll"><table class="rt" id="people-table"></table></div>
+        <h4>Every pair</h4>
+        <p class="block-note">
+          Each factor is rated 0–100 for the pair (100 = as alike, or as close, as possible); “–” means it can’t be
+          measured for that pair. The score combines the ratings using the weights above.
+        </p>
+        <div class="table-scroll tall"><table class="rt" id="pairs-table"></table></div>
+      </details>
 
       <div class="block" id="gallery-block">
-        <h3>Everyone in the photo</h3>
+        <h3>Everyone in the photos</h3>
         <ol class="gallery" id="gallery"></ol>
       </div>
 
@@ -113,16 +138,16 @@
           <h3 class="can">What it reads</h3>
           <ul>
             <li>Estimated age and apparent gender</li>
-            <li>Height in the photo and outfit colour</li>
-            <li>How close people stand and whether they lean in</li>
+            <li>An attractiveness rating, when its model is installed</li>
+            <li>Outfit colour and, if you switch it on, where people stand</li>
           </ul>
         </div>
         <div>
           <h3 class="cannot">How it decides</h3>
           <p>
-            Every possible man–woman pair gets a score out of 100 for how alike the two people are and how they’re posed.
-            The best pairs are picked without using anyone twice, so a photo with two couples gives two pairs.
-            It’s an experiment, not proof: friends pose close together too.
+            Every possible man–woman pair is rated on each factor, and the ratings are combined into a score out of 100
+            using weights you can change. The best pairs are picked without using anyone twice.
+            It’s an experiment, not proof: friends and siblings can look alike too.
           </p>
         </div>
         <div>
@@ -130,7 +155,8 @@
           <ul>
             <li>Skin colour is never used</li>
             <li>Anyone who may be under 18 is never matched, and nor is anyone whose face is too small to check</li>
-            <li>Nobody is identified, and your photo isn’t saved. Only the measurements are logged on this computer, to help fix mistakes.</li>
+            <li>With several photos, faces are compared with each other so the same person is counted once. They are only compared within your upload: no names, no database, nothing kept.</li>
+            <li>Your photo isn’t saved. Only the measurements are logged on this computer, to help fix mistakes.</li>
           </ul>
         </div>
       </div>
@@ -139,7 +165,7 @@
 
   <footer class="site-footer">
     <div class="wrap">
-      <p>The Dating Game is an academic machine learning project. Face detection uses YuNet from the OpenCV Model Zoo; age and expression models come from the ONNX Model Zoo.</p>
+      <p>The Dating Game is an academic machine learning project. Face detection (YuNet) and same-person matching (SFace) come from the OpenCV Model Zoo; age and expression models come from the ONNX Model Zoo.</p>
     </div>
   </footer>
 

@@ -81,7 +81,7 @@ def test_skin_colour_never_measured():
 def test_people_features_are_read():
     for f in run("group_four.jpg")["faces"]:
         feats = f["features"]
-        assert set(feats) == {"age", "smile", "outfit"}
+        assert set(feats) == {"age", "smile", "outfit", "attractiveness"}
         assert feats["smile"]["smiling"] is True             # the test portrait is smiling
 
 

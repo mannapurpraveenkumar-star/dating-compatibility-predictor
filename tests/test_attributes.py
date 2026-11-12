@@ -85,3 +85,27 @@ def test_enlarged_thumbnails_are_refused():
     assert min(f.w, f.h) >= 40
     age = describe_person(blown_up, f)["age"]
     assert age["adult"] is False and age["reason"] == "face too blurry to check age"
+
+
+class FakeRater:
+    """Stands in for the attractiveness ONNX model (not shipped with the tests)."""
+    available = True
+
+    def forward(self, blob):
+        assert blob.shape == (1, 3, 224, 224)
+        return np.array([3.4])
+
+
+def test_attractiveness_rating_when_model_installed(monkeypatch):
+    monkeypatch.setattr(attributes, "attractiveness_model", FakeRater())
+    d = decode_image(load("single_face.jpg"))
+    f = get_detector().detect(d.image).faces[0]
+    rating = describe_person(d.image, f)["attractiveness"]
+    assert rating == {"score": 3.4, "scale": "1-5", "reliable": True}
+
+
+def test_attractiveness_absent_without_model(monkeypatch, tmp_path):
+    monkeypatch.setattr(attributes, "attractiveness_model", attributes._OnnxModel(tmp_path / "none.onnx", "A"))
+    d = decode_image(load("single_face.jpg"))
+    f = get_detector().detect(d.image).faces[0]
+    assert describe_person(d.image, f)["attractiveness"] is None

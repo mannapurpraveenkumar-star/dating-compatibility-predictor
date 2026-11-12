@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.analysis import pair_features
-from app.matching import MIN_MATCH_SCORE, is_eligible, match_level, predict, score_pair
+from app.matching import DEFAULT_WEIGHTS, FACTORS, parse_weights, MIN_MATCH_SCORE, is_eligible, match_level, predict, score_pair
 from app.vision import Face
 
 
@@ -23,8 +23,11 @@ def person(age=30, smile=0.9, lab=(50.0, 10.0, 10.0), visible=True, adult=None, 
     }
 
 
-def scored(fa, fb, pa, pb):
-    return score_pair(fa, fb, pa, pb, pair_features(fa, fb))
+def scored(fa, fb, pa, pb, weights=None):
+    return score_pair(fa, fb, pa, pb, pair_features(fa, fb), weights)
+
+
+WITH_PROXIMITY = {"closeness": 20, "side_by_side": 10, "leaning_in": 10}
 
 
 def test_similar_people_score_higher_than_different_people():
@@ -37,7 +40,10 @@ def test_similar_people_score_higher_than_different_people():
 def test_closer_pair_scores_higher_than_distant_pair():
     a, near, far = face(0, 100), face(1, 190), face(2, 700)
     p = person()
-    assert scored(a, near, p, p)["match_score"] > scored(a, far, p, p)["match_score"]
+    w = parse_weights(WITH_PROXIMITY)
+    assert scored(a, near, p, p, w)["match_score"] > scored(a, far, p, p, w)["match_score"]
+    # with the default weights (proximity off) distance makes no difference
+    assert scored(a, near, p, p)["match_score"] == scored(a, far, p, p)["match_score"]
 
 
 def test_missing_features_do_not_zero_the_score():
@@ -182,3 +188,51 @@ def test_blocked_pairs_are_never_predicted():
             {"a": "Person A", "b": "Person C", "match_score": 60, "reasons": []}]
     p = predict(rows, {k: person() for k in ("Person A", "Person B", "Person C")}, 3)
     assert [x["pair"] for x in p["pairs"]] == [["Person A", "Person C"]]
+
+
+# ---- factor registry and weights -----------------------------------------
+def test_defaults_are_similarity_only():
+    for f in FACTORS:
+        if f.group == "proximity":
+            assert DEFAULT_WEIGHTS[f.key] == 0
+    assert DEFAULT_WEIGHTS["age"] > 0 and DEFAULT_WEIGHTS["attractiveness"] > 0
+
+
+def test_parse_weights_clamps_and_ignores_unknown_keys():
+    w = parse_weights({"age": 250, "closeness": -5, "outfit": "12.6", "bogus": 9, "height": "x"})
+    assert w["age"] == 100 and w["closeness"] == 0 and w["outfit"] == 13
+    assert "bogus" not in w and w["height"] == DEFAULT_WEIGHTS["height"]
+
+
+def test_weight_zero_switches_a_factor_off_but_still_rates_it():
+    a, b = face(0, 100), face(1, 190)
+    s = scored(a, b, person(), person(age=50), parse_weights({"age": 0}))
+    age = next(x for x in s["breakdown"] if x["feature"] == "age")
+    assert age["rating"] == 0.0 and age["points"] is None and age["status"] == "off"
+    assert s["components"]["age"] == 0.0
+
+
+def test_changing_weights_changes_the_score():
+    a, b = face(0, 100), face(1, 190)
+    pa, pb = person(age=30), person(age=50, lab=(50.0, 10.0, 10.0))
+    age_heavy = scored(a, b, pa, pb, parse_weights({"age": 100, "outfit": 10}))["match_score"]
+    outfit_heavy = scored(a, b, pa, pb, parse_weights({"age": 5, "outfit": 100}))["match_score"]
+    assert outfit_heavy > age_heavy
+
+
+def test_attractiveness_similarity():
+    a, b = face(0, 100), face(1, 190)
+    pa, pb = person(), person()
+    pa["attractiveness"], pb["attractiveness"] = {"score": 3.0}, {"score": 3.6}
+    assert scored(a, b, pa, pb)["components"]["attractiveness"] == 0.6
+    pb["attractiveness"] = {"score": 4.8}
+    assert scored(a, b, pa, pb)["components"]["attractiveness"] == 0.0
+
+
+def test_pairs_from_different_photos_skip_proximity():
+    a, b = face(0, 100), face(1, 190)
+    s = score_pair(a, b, person(), person(), None, parse_weights(WITH_PROXIMITY))
+    assert s["same_photo"] is False
+    for key in ("closeness", "side_by_side", "leaning_in", "height"):
+        assert s["components"][key] is None
+    assert s["match_score"] > 0

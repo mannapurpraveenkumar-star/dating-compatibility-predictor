@@ -46,24 +46,30 @@ def show(e: dict) -> None:
     print("=" * 96)
     img = e["image"]
     print(f"Analysis {e['id']}  {e['time']}  {img['width']}x{img['height']} {img['format']}  "
-          f"{e['face_count']} faces  (app {e['app_version']})")
+          f"{e['face_count']} faces, {e.get('people_count', e['face_count'])} different people  (app {e['app_version']})")
     print(f"Result: {e['prediction']['message']}")
     print("\nPEOPLE")
     print(f"{'Who':10}{'Face px':>9}{'Age':>5}{'Model 1':>9}{'Model 2':>9}{'Child?':>8}  "
-          f"{'Adult':6}{'Gender':>10}  {'Outfit':10}Result for this person")
+          f"{'Adult':6}{'Gender':>10}{'Attract':>8}  {'Outfit':10}Result for this person")
     status = {x["label"]: x["detail"] for x in e["prediction"].get("people_status") or []}
     for p in e["people"]:
         age = p["age"] or {}
         face_px = min(p["box"]["w"], p["box"]["h"])
         flags = status.get(p["label"]) or age.get("reason") or ""
+        if p.get("duplicate_of"):
+            flags = f"same person as {p['duplicate_of']} (similarity {p.get('same_person_similarity')})"
         if p["quality_flags"]:
             flags += f"  [{', '.join(p['quality_flags'])}]"
         print(f"{p['label']:10}{face_px:>9}{fmt(age.get('years')):>5}{fmt(age.get('regressor_years')):>9}"
               f"{fmt(age.get('band_years')):>9}{fmt(age.get('child_signal')):>8}  "
-              f"{'yes' if age.get('adult') else 'NO':6}{gender_text(age):>10}  "
+              f"{'yes' if age.get('adult') else 'NO':6}{gender_text(age):>10}{fmt((p.get('attractiveness') or {}).get('score')):>8}  "
               f"{fmt(p['outfit'].get('name')):10}{flags}")
     print("\nPAIRS (best first; components are 0-1, '-' = not measurable)")
-    keys = ["age", "height", "outfit", "closeness", "side_by_side", "leaning_in"]
+    sys.path.insert(0, str(ROOT))
+    from app.matching import FACTOR_KEYS
+    keys = FACTOR_KEYS
+    if e.get("weights"):
+        print("Weights used: " + ", ".join(f"{k} {v}" for k, v in e["weights"].items()))
     excluded = {x["label"] for x in e["prediction"]["excluded_people"]}
     chosen = {frozenset(x["pair"]) for x in e["prediction"]["pairs"]}
     print(f"{'Pair':22}{'Score':>6}  " + "".join(f"{k[:9]:>10}" for k in keys) + "  Note")

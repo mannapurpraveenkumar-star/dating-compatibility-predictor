@@ -21,6 +21,7 @@ If the file is missing or corrupted, run:
 |---|---|---|
 | `age_googlenet.onnx` (23.9 MB) | [ONNX Model Zoo, age_gender](https://github.com/onnx/models/tree/main/validated/vision/body_analysis/age_gender) | Age bands; used only as a second check for any sign that a person is a child. |
 | `genderage.onnx` (1.3 MB) | [InsightFace](https://github.com/deepinsight/insightface) model, file from [yakhyo/facial-analysis](https://github.com/yakhyo/facial-analysis) | Numeric age estimate. **Its age output gives the age estimate; its gender output is used only for the man–woman pairing rule (and only when confident).** InsightFace's pretrained models are licensed for non-commercial research only. |
+| `face_recognition_sface_2021dec.onnx` (38.7 MB) | [OpenCV Model Zoo, SFace](https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface), Apache-2.0 | Multi-photo mode only: spots the same person in two photos so they are counted once. Without it, repeats are counted as separate people. |
 | `emotion-ferplus-8.onnx` (35.0 MB) | [ONNX Model Zoo, emotion_ferplus](https://github.com/onnx/models/tree/main/validated/vision/body_analysis/emotion_ferplus) | Facial expression; the "happiness" share is used as a smile score |
 
 Checksums are in `app/config.py`. Without these files the app still runs, but nobody can be confirmed as an adult, so no pairs are predicted.

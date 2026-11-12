@@ -105,7 +105,7 @@ else:
     bad(f"{MODEL} not found", "Run: .\\.venv\\Scripts\\python.exe scripts\\download_model.py")
 
 print("\n5b. Age and expression models (optional; features are skipped without them)")
-for fname in ("age_googlenet.onnx", "genderage.onnx", "emotion-ferplus-8.onnx"):
+for fname in ("age_googlenet.onnx", "genderage.onnx", "emotion-ferplus-8.onnx", "face_recognition_sface_2021dec.onnx"):
     if (ROOT / "models" / fname).is_file():
         ok(f"{fname} present")
     else:

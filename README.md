@@ -1,28 +1,69 @@
 # THE DATING GAME v2.0
 *Beauty Is in the Eye of the Beholder*
 
-An academic machine learning project. Upload a group photo and the app:
+An academic machine learning project. Upload one group photo, or up to 5 photos, and the app:
 
-1. validates the image (JPEG, PNG or WebP, up to 10 MB and 40 megapixels),
-2. detects every face with the pretrained **YuNet** CNN detector,
-3. reads each person's features in the background: apparent age, expression,
-   outfit colour, height in the photo, head tilt and position,
-4. scores every possible pair, n × (n − 1) / 2 of them, on **similarity**
-   (alike in age, height, outfit, expression) and **togetherness**
-   (close, side by side, leaning in),
-5. shows **the most likely pairs**, picked best-first without using anyone twice (a photo with two couples gives two pairs), each with a match score out of 100,
-6. lets you download a report and start again.
+1. validates each image (JPEG, PNG or WebP, up to 10 MB and 16 megapixels each),
+2. detects every face with the pretrained **YuNet** CNN detector; faces from all
+   photos form **one group**, labelled Person A, B, C… photo by photo,
+3. reads each person's features in the background: estimated age, apparent
+   gender, an **attractiveness rating** (when its model is installed), outfit
+   colour, and position in the photo,
+4. **rates every pair**, n × (n − 1) / 2 of them, from 0 to 100 on each factor,
+5. combines the ratings into a score using **adjustable weights** (sliders on the
+   page), and predicts the likely couples, using nobody twice,
+6. shows the pairs, **all the ratings** (every person, every pair) and a
+   downloadable report.
 
 ## How the match score works
 
-| Part | Feature | Weight |
-|---|---|---|
-| Similarity | Estimated age (same age = full marks, 15+ years apart = zero) | 40 |
-| Similarity | Height in the photo (only when both faces are at a similar distance) | 5 |
-| Similarity | Outfit colour (CIELAB colour distance) | 10 |
-| Togetherness | Distance apart (full marks at 1.2 face-widths or closer, zero at 4) | 20 |
-| Togetherness | Next to each other among the adults (children in between don't count) | 10 |
-| Togetherness | Head tilted towards the other person | 10 |
+Each factor gives a pair a rating from 0 (as different / as far apart as
+possible) to 1 (as alike / as close as possible). The score is the weighted
+average of the ratings that can be measured. All factors are defined in one
+list, `FACTORS` in `app/matching.py`.
+
+| Factor | Group | Default weight | Rating |
+|---|---|---|---|
+| Similar age | similarity | 40 | Same age = 1, 20+ years apart = 0 |
+| Similar attractiveness | similarity | 30 | SCUT-FBP5500 rating, 1–5 scale: same = 1, 1.5+ apart = 0 |
+| Similar outfit colour | similarity | 10 | CIELAB colour distance of the chest area |
+| Similar height in photo | similarity | 5 | Same photo and similar camera distance only |
+| Standing close | proximity | 0 (off) | Full at 1.2 face-widths or closer, zero at 4 |
+| Next to each other | proximity | 0 (off) | Neighbours among the adults (children in between don't count) |
+| Leaning in | proximity | 0 (off) | Head tilted towards the other person |
+
+**Defaults are similarity only**: proximity starts at 0 because in this
+project's use case where people stand is not relevant. Turn it on with the
+"Include position in photo" button or the sliders. A factor at weight 0 is still
+rated and shown in the tables, just not scored. Pairs from **different photos**
+have no shared position, so proximity and height are skipped for them.
+
+The API takes the weights as an optional form field, JSON:
+`weights={"age": 40, "attractiveness": 30, "closeness": 20}`. Missing keys use the
+defaults; values are clamped to 0–100. `GET /api/factors` lists the factors.
+
+### Adding or removing a factor
+1. Write a rating function in `app/matching.py`: `def _my_factor(ctx: PairContext) -> float | None`,
+   returning 0–1, or `None` when it can't be measured for that pair.
+   `ctx.pa` / `ctx.pb` are the two people's features, `ctx.geometry` their positions
+   (`None` when they're in different photos).
+2. Add `Factor("my_factor", "Display name", "similarity", 10, _my_factor, "One-line description")` to `FACTORS`.
+3. If it needs a new per-person measurement, add it in `describe_person` in `app/attributes.py`.
+
+The sliders, the ratings tables, the report and the log pick it up
+automatically. To switch a factor off by default, set its weight to 0; to
+remove it, delete its line.
+
+### Attractiveness rating (optional model)
+The rating comes from a ResNet-18 trained on the SCUT-FBP5500 research dataset
+(5,500 faces, 73% East Asian and 27% white, rated 1–5 by 60 volunteers;
+non-commercial research use only). It reflects those raters' taste and is
+unreliable for other groups, so the app uses it only as **similarity** between
+two people (the *matching hypothesis*) and shows each rating with that warning.
+The weights are published in PyTorch format, so convert them **once**:
+run `scripts/convert_attractiveness_model.py` in Google Colab (instructions at
+the top of the file) and put the resulting `attractiveness_resnet18.onnx` in
+`models\`. Without it, the factor is skipped and the page says "not installed".
 
 Age carries the most weight because partners' ages are strongly correlated in
 population studies (around r ≈ 0.8), far more than height (around r ≈ 0.2).
@@ -67,7 +108,8 @@ optional form fields: `adults=Person A,Person C` and `children=Person B`.
 ### Safeguards
 - **Skin colour is never measured or used.** Matching on it would amount to matching by ethnicity.
 - **People who may be under 18 are never matched.** Someone counts as an adult only if (1) their face is at least 40 px wide and sharp enough to read, (2) their combined age estimate (average of the InsightFace regressor and the age-band model) is 21 or more, **and** (3) the age-band model's average chance of "age 12 or under" across 4 views is below 35%. Otherwise they're left out. Testing showed why two models are needed: the regressor read young children as 23–28, and the band model read adults 10–20 years too young. Each catches the other's mistakes. Faces under 40 px are refused outright, and so are faces too blurry to read (sharpness under 90). This also stops someone enlarging a small thumbnail to get past the size check.
-- **No identification.** No face recognition, no names.
+- **Same person in several photos is counted once.** When you upload more than one photo, the SFace model compares faces from *different* photos (never two faces in the same photo). If two faces match closely enough (cosine similarity 0.40 or more), they are treated as one person: the larger face is kept and the other is shown as "Same person as Person X" and never paired. Faces are compared only with each other within one upload: no names, no database, nothing stored. Turn it off with the environment variable `SAME_PERSON_CHECK=0`, or change `SAME_PERSON_COSINE` in `app\config.py`.
+- **No identification.** Nobody is named or looked up; there is no database of faces.
 - **Honest output.** The result is labelled as an experimental prediction, not proof of a relationship.
 
 ---
@@ -127,7 +169,7 @@ API docs (from FastAPI): http://127.0.0.1:8000/docs
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
 ```
-107 tests covering valid group photos in all three formats, invalid and corrupted
+142 tests covering valid group photos in all three formats, multiple photos, adjustable weights, invalid and corrupted
 files, unsupported formats, empty uploads, no faces, one face, many faces,
 left-to-right ordering, pair counts, duplicate-pair prevention, file-size and
 pixel limits (including a decompression-bomb header), detector failures, API
@@ -152,18 +194,22 @@ THE_DATING_GAME/
 ├── app/
 │   ├── __init__.py      version
 │   ├── config.py        all limits and thresholds in one place
-│   ├── main.py          FastAPI routes: /, /api/health, /api/analyse
-│   ├── vision.py        validation, YuNet detection, crops, annotation
-│   ├── attributes.py    per-person features: age, expression, outfit colour
-│   ├── matching.py      pair scoring and the single best-pair prediction
-│   ├── analysis.py      runs the pipeline and builds the result
-│   ├── report.py        Markdown and self-contained HTML report
+│   ├── main.py          FastAPI routes: /, /api/health, /api/factors, /api/analyse
+│   ├── vision.py        validation, YuNet detection, crops, annotation, multi-photo labels
+│   ├── attributes.py    per-person features: age, gender, attractiveness, expression, outfit
+│   ├── matching.py      THE FACTOR LIST, pair ratings, weights, choosing the pairs
+│   ├── analysis.py      runs the pipeline over one or more photos and builds the result
+│   ├── report.py        Markdown and self-contained HTML report (incl. all ratings)
+│   ├── debuglog.py      background log of measurements (never images)
 │   └── research.py      offline experiment harness (not used by the website)
-├── models/              YuNet, age and expression ONNX models + notes
+├── models/              YuNet, age, gender and expression ONNX models + notes
 ├── research/            protocol and CSV template for consented data
 ├── scripts/
 │   ├── diagnose_env.py  environment and OpenCV diagnostics
-│   └── download_model.py
+│   ├── download_model.py
+│   ├── convert_attractiveness_model.py   one-off conversion, run in Google Colab
+│   └── show_log.py      read the measurement log
+├── render.yaml          Render deployment settings
 ├── static/              index.html, style.css, script.js, favicon.svg
 ├── tests/               pytest suite + fixtures
 ├── pytest.ini
@@ -186,7 +232,8 @@ Changes from the suggested structure, and why:
 |---|---|---|
 | 200 | | Analysis result (also for zero faces) |
 | 400 | `empty_file`, `missing_file`, `bad_request` | Nothing usable was sent |
-| 413 | `file_too_large`, `too_many_pixels` | Over 10 MB or 40 MP |
+| 413 | `file_too_large`, `too_many_pixels` | Over 10 MB or 16 MP (per photo) |
+| 400 | `too_many_photos` | More than 5 photos |
 | 415 | `unsupported_format` | Not JPEG/PNG/WebP (checked from file bytes, not the name) |
 | 422 | `corrupted_image`, `image_too_small` | Can't be decoded, or under 64 px |
 | 500 | `internal_error`, `detection_failed` | Unexpected failure; the server keeps running |
@@ -229,7 +276,8 @@ At most 40 faces (780 pairs) are analysed. If more are found, the most confident
 - Nothing is stored between requests; responses are sent with `Cache-Control: no-store`.
 - Server logs contain only counts, sizes, timings and error codes. They never contain filenames or image data.
 - **Debug log:** each analysis appends its measurements to `logs\analysis_log.jsonl` on this computer: face boxes, age estimates from both models, child signal, smile score, outfit colour, every pair's score breakdown and the result. It never stores the photo, face crops or the filename. Read it with `scripts\show_log.py` (add `--last 5`, or `--csv people.csv` to open it in Excel). Turn it off with `DEBUG_LOG_ENABLED = False` in `app\config.py`.
-- No identification: no face recognition, no database, no names. No inference of gender, ethnicity, skin colour or attractiveness.
+- No identification: no database, no names. Face matching (SFace) is used only in multi-photo mode, to spot the same person in two of your photos; the face "fingerprints" exist only while the request runs and are never stored or logged.
+- Skin colour and ethnicity are never inferred. Apparent gender and (if installed) an attractiveness rating are estimated, as described above.
 - The page loads two fonts from Google Fonts. Without internet access it falls back to system fonts. Your photo is never sent anywhere except this local server.
 
 ## 8. Limitations

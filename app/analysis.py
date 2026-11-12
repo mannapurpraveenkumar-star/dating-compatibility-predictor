@@ -1,12 +1,13 @@
-"""Analysis pipeline: features for each person, a score for every pair, one predicted pair.
+"""Analysis pipeline: features for each person, a rating for every pair, the likely couples.
 
-1. Read each detected person's features (app.attributes) in the background.
-2. Enumerate every unique pair once: n(n-1)/2.
-3. Score each pair for similarity and togetherness (app.matching).
-4. Return the single best pair as the prediction.
+1. Read each detected person's features (app.attributes): age, apparent gender,
+   attractiveness rating, outfit colour.
+2. Enumerate every unique pair once: n(n-1)/2, across all uploaded photos.
+3. Rate each pair on every factor and score it with the chosen weights (app.matching).
+4. Choose the best set of pairs (app.matching.predict).
 
-The per-person features and per-pair scores stay in the JSON result for
-research and debugging, but the website shows only the prediction.
+All per-person ratings and per-pair ratings are returned, so the website can
+show the ratings themselves, not only the matches.
 """
 
 from __future__ import annotations
@@ -19,26 +20,34 @@ import numpy as np
 
 from app import __version__, config
 from app.attributes import describe_person
-from app.matching import is_eligible, predict, score_pair
-from app.vision import DecodedImage, Detection, Face, colour_hex, face_region, grey_stats
+from app.identity import same_people
+from app.matching import MIN_MATCH_SCORE, factor_catalogue, is_eligible, parse_weights, predict, score_pair
+from app.vision import DecodedImage, Detection, Face, colour_hex, face_region, grey_stats, label_across_photos
 
 RESEARCH_QUESTION = "Can a Machine Learning Model predict whether two people are meant to be together?"
 
 METHOD = (
-    "Each person's estimated age, apparent gender, height in the photo and outfit colour are read from "
-    "the image. Every possible man-woman pair is scored on how similar the two people are and how they "
-    "are posed (close together, side by side, leaning in). The best set of pairs is the prediction."
+    "Each person's estimated age, apparent gender, attractiveness rating and outfit colour are read from "
+    "the image. Every possible man-woman pair is rated on each factor (how similar the two people are, "
+    "and optionally how close they stand), the ratings are combined using adjustable weights, and the "
+    "best set of pairs is the prediction. Faces can come from one photo or several; the same person "
+    "appearing in more than one photo is counted once."
 )
 
 LIMITATIONS = [
-    "This is an experimental prediction from one photo. It has not yet been tested against real couples, "
+    "This is an experimental prediction. It has not yet been tested against real couples, "
     "so its accuracy is unknown.",
-    "Friends, family and colleagues often pose close together, so a high score does not prove two people are dating.",
+    "Friends, family and colleagues can look alike or pose close together, so a high score does not prove "
+    "two people are dating.",
     "Estimated age is often several years out, and height in the photo is not real height.",
+    "The attractiveness rating comes from a model trained on 5,500 faces (73% East Asian, 27% white) "
+    "rated by 60 volunteers. It reflects their taste, not a fact, and is unreliable for other groups.",
     "Skin colour is never used. People who may be under 18, or whose faces are too small to check, are never matched.",
     "Pairs are limited to one man and one woman by apparent gender, so same-sex couples are not predicted, "
     "and gender read from a face can be wrong (the rule only applies when the model is confident).",
-    "Nobody is identified: there is no face recognition and no names.",
+    "With several photos, faces are compared with each other to spot the same person twice "
+    "(SFace face matching). This only works within one upload: no names, no database, nothing stored. "
+    "Look-alikes such as twins can be merged by mistake, and a very different angle can be missed.",
 ]
 
 # Numeric features per pair, in a fixed order, shared with research.py.
@@ -131,23 +140,41 @@ def apply_age_answers(age: dict, answer: str | None) -> dict:
     return age
 
 
-def analyse(decoded: DecodedImage, detection: Detection, age_answers: dict[str, str] | None = None) -> dict:
-    """Build the structured, JSON-serialisable analysis result.
+def analyse(decoded: DecodedImage, detection: Detection, age_answers: dict[str, str] | None = None,
+            weights: dict | None = None) -> dict:
+    """Analyse one photo. See analyse_photos for the details."""
+    return analyse_photos([(decoded, detection)], age_answers, weights)
 
-    ``age_answers`` maps a person's label to "adult" or "child", as confirmed by the user.
+
+def analyse_photos(photos: list[tuple[DecodedImage, Detection]],
+                   age_answers: dict[str, str] | None = None,
+                   weights: dict | None = None) -> dict:
+    """Build the structured, JSON-serialisable analysis result for one or more photos.
+
+    * Faces from all photos form ONE group, labelled Person A, B, ... photo by photo.
+    * Pairs from the same photo are rated on every factor; pairs from different
+      photos have no shared geometry, so proximity factors are skipped for them.
+    * ``age_answers`` maps a label to "adult" or "child", as confirmed by the user.
+    * ``weights`` maps factor keys to 0-100 (missing keys use the defaults).
     """
     age_answers = age_answers or {}
-    img = decoded.image
-    faces = detection.faces
+    weights = parse_weights(weights)
+    faces = label_across_photos([det.faces for _, det in photos])
     n = len(faces)
 
-    h, w = img.shape[:2]
-    s = min(1.0, 1024 / max(h, w))
-    small = img if s == 1.0 else cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
-    image_flags = quality_flags(grey_stats(small))
+    images = []
+    for p, (decoded, det) in enumerate(photos):
+        img = decoded.image
+        h, w = img.shape[:2]
+        s = min(1.0, 1024 / max(h, w))
+        small = img if s == 1.0 else cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
+        images.append({"photo": p + 1, "width": decoded.width, "height": decoded.height,
+                       "format": decoded.fmt.upper(), "quality_flags": quality_flags(grey_stats(small)),
+                       "face_count": len(det.faces)})
 
     face_rows, people = [], {}
     for f in faces:
+        img = photos[f.photo][0].image
         person = describe_person(img, f)
         person["age"] = apply_age_answers(person["age"], age_answers.get(f.label))
         people[f.label] = person
@@ -155,6 +182,7 @@ def analyse(decoded: DecodedImage, detection: Detection, age_answers: dict[str, 
             "index": f.index,
             "label": f.label,
             "letter": f.letter,
+            "photo": f.photo + 1,
             "colour": colour_hex(f.index),
             "box": {"x": f.x, "y": f.y, "w": f.w, "h": f.h},
             "confidence": round(f.score, 3),
@@ -162,15 +190,30 @@ def analyse(decoded: DecodedImage, detection: Detection, age_answers: dict[str, 
             "features": person,
         })
 
-    # "Side by side" is judged among the adults only, so a child standing
-    # between two parents does not count against them.
-    adult_order = [f.label for f in faces if is_eligible(people[f.label])]
+    # The same person in two photos is one person: keep the largest face, mark the rest.
+    same = same_people([d.image for d, _ in photos], faces)
+    for label, keep in same["duplicate_of"].items():
+        people[label]["duplicate_of"] = keep
+        people[label]["same_person_similarity"] = same["similarity"].get(label)
+    for group in same["groups"]:
+        people[group[0]]["also_in"] = [{"label": x, "photo": next(f.photo for f in faces if f.label == x) + 1}
+                                       for x in group[1:]]
+
+    # "Side by side" is judged among the adults of the same photo only, so a child
+    # standing between two parents does not count against them.
+    adult_order = {p: [f.label for f in faces if f.photo == p and is_eligible(people[f.label])]
+                   for p in range(len(photos))}
     scored = []
     for a, b in unique_pairs(faces):
-        feat = pair_features(a, b)
-        both_adults = a.label in adult_order and b.label in adult_order
-        adjacent = both_adults and abs(adult_order.index(a.label) - adult_order.index(b.label)) == 1
-        row = score_pair(a, b, people[a.label], people[b.label], {**feat, "adjacent_in_row": int(adjacent)})
+        if a.photo == b.photo:
+            feat = pair_features(a, b)
+            order = adult_order[a.photo]
+            adjacent = (a.label in order and b.label in order
+                        and abs(order.index(a.label) - order.index(b.label)) == 1)
+            geometry = {**feat, "adjacent_in_row": int(adjacent)}
+        else:
+            feat, geometry = None, None
+        row = score_pair(a, b, people[a.label], people[b.label], geometry, weights)
         row["geometry"] = feat
         scored.append(row)
     assert len(scored) == pair_count(n)
@@ -182,23 +225,26 @@ def analyse(decoded: DecodedImage, detection: Detection, age_answers: dict[str, 
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "research_question": RESEARCH_QUESTION,
         "method": METHOD,
-        "image": {
-            "width": decoded.width,
-            "height": decoded.height,
-            "format": decoded.fmt.upper(),
-            "quality_flags": image_flags,
-        },
+        "photo_count": len(photos),
+        "image": images[0] if images else None,
+        "images": images,
         "detector": {
             "name": "YuNet (OpenCV FaceDetectorYN)",
             "opencv_version": cv2.__version__,
-            "total_detected": detection.total_detected,
-            "capped_at": config.MAX_FACES if detection.capped else None,
+            "total_detected": sum(det.total_detected for _, det in photos),
+            "capped_at": config.MAX_FACES if any(det.capped for _, det in photos) else None,
         },
         "face_count": n,
+        "people_count": n - len(same["duplicate_of"]),
+        "same_person": {"checked": same.get("checked", False), "groups": same["groups"],
+                        "threshold": config.SAME_PERSON_COSINE},
         "pair_count": pair_count(n),
+        "weights": weights,
+        "min_match_score": MIN_MATCH_SCORE,
+        "factors": factor_catalogue(),
         "prediction": prediction,
         "age_answers_used": {k: v for k, v in age_answers.items() if k in people},
         "faces": face_rows,
-        "pair_scores": sorted(scored, key=lambda p: -p["match_score"]),
+        "pair_scores": sorted(scored, key=lambda p: (-p["match_score"], p["a"], p["b"])),
         "limitations": LIMITATIONS,
     }

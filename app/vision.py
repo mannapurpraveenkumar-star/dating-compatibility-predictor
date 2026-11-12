@@ -223,6 +223,11 @@ def decode_image(data: bytes) -> DecodedImage:
             f"{config.MIN_IMAGE_SIDE} pixels on each side.",
             code="image_too_small",
         )
+    # Work on a copy no larger than WORKING_MAX_SIDE: keeps memory low on small
+    # servers (several photos at once) without losing useful face detail.
+    s = config.WORKING_MAX_SIDE / max(w, h)
+    if s < 1:
+        image = cv2.resize(image, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
     return DecodedImage(image=image, fmt=fmt, width=w, height=h, byte_size=len(data))
 
 
@@ -240,6 +245,7 @@ class Face:
     h: int
     score: float                                # YuNet detection confidence (0-1)
     landmarks: list[tuple[float, float]] = field(default_factory=list)  # 5 points
+    photo: int = 0                              # which uploaded photo (0-based) in multi-photo mode
 
     @property
     def cx(self) -> float:
@@ -365,6 +371,20 @@ class Detection:
     @property
     def capped(self) -> bool:
         return self.total_detected > len(self.faces)
+
+
+def label_across_photos(per_photo: list[list[Face]]) -> list[Face]:
+    """Give faces from several photos one continuous labelling: photo 1's faces
+    left to right (Person A, B, ...), then photo 2's, and so on."""
+    faces: list[Face] = []
+    for p, photo_faces in enumerate(per_photo):
+        for f in photo_faces:
+            f.photo = p
+            f.index = len(faces)
+            f.letter = person_letter(f.index)
+            f.label = f"Person {f.letter}"
+            faces.append(f)
+    return faces
 
 
 _default_detector: FaceDetector | None = None

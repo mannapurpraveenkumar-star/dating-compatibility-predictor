@@ -34,7 +34,11 @@ def build_entry(result: dict) -> dict:
             "detection_confidence": f["confidence"],
             "quality_flags": f["quality_flags"],
             "age": feats.get("age"),
+            "photo": f.get("photo", 1),
             "smile_score": smile.get("score"),   # logged for reference; not used in the score
+            "attractiveness": feats.get("attractiveness"),
+            "duplicate_of": feats.get("duplicate_of"),            # same person as (multi-photo)
+            "same_person_similarity": feats.get("same_person_similarity"),
             "outfit": {k: outfit.get(k) for k in ("visible", "name", "hex", "lab")},
         })
     return {
@@ -43,6 +47,9 @@ def build_entry(result: dict) -> dict:
         "app_version": result["app_version"],
         "image": {k: result["image"][k] for k in ("width", "height", "format")},
         "face_count": result["face_count"],
+        "people_count": result.get("people_count", result["face_count"]),
+        "photo_count": result.get("photo_count", 1),
+        "weights": result.get("weights"),
         "people": people,
         "pair_scores": [
             {"a": p["a"], "b": p["b"], "match_score": p["match_score"], "components": p["components"],

@@ -45,3 +45,13 @@ def test_html_escapes_text():
     r["prediction"]["message"] = "<script>alert(1)</script>"
     html = build_html(r)
     assert "<script>alert(1)</script>" not in html and "&lt;script&gt;" in html
+
+
+def test_report_includes_ratings_and_weights(no_gender_rule):
+    r = result_for("group_four.jpg")
+    md = build_markdown(r)
+    assert "## Everyone's ratings" in md and "## Every pair's ratings" in md
+    assert "Similar attractiveness" in md and "| Standing close | proximity | 0 |" in md
+    assert md.count("PREDICTED") == len(r["prediction"]["pairs"])
+    html = build_html(r, ["data:image/jpeg;base64,ONE", "data:image/jpeg;base64,TWO"])
+    assert "ONE" in html and "TWO" in html and "Every pair's ratings" in html

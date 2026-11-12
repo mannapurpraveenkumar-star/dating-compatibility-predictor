@@ -21,6 +21,7 @@ MODELS = [
     ("Age bands", config.AGE_MODEL_PATH, config.AGE_MODEL_SHA256, config.AGE_MODEL_URL),
     ("Age regressor", config.AGE_REGRESSOR_PATH, config.AGE_REGRESSOR_SHA256, config.AGE_REGRESSOR_URL),
     ("Expression (FER+)", config.EXPRESSION_MODEL_PATH, config.EXPRESSION_MODEL_SHA256, config.EXPRESSION_MODEL_URL),
+    ("Same person (SFace)", config.SFACE_MODEL_PATH, config.SFACE_MODEL_SHA256, config.SFACE_MODEL_URL),
 ]
 
 

@@ -67,6 +67,7 @@ class _OnnxModel:
 age_model = _OnnxModel(config.AGE_MODEL_PATH, "Age bands")
 age_regressor = _OnnxModel(config.AGE_REGRESSOR_PATH, "Age regressor")
 expression_model = _OnnxModel(config.EXPRESSION_MODEL_PATH, "Expression")
+attractiveness_model = _OnnxModel(config.ATTRACTIVENESS_MODEL_PATH, "Attractiveness")
 
 
 def _softmax(x: np.ndarray) -> np.ndarray:
@@ -153,6 +154,31 @@ def estimate_age(image: np.ndarray, face: Face) -> dict:
     if years < config.ADULT_MIN_AGE or bands["child_signal"] >= config.CHILD_SIGNAL_LIMIT:
         return {**detail, "adult": False, "reason": "may be under 18"}
     return {**detail, "adult": True, "reason": None}
+
+
+# ---------------------------------------------------------------------------
+# Attractiveness (optional model)
+# ---------------------------------------------------------------------------
+def estimate_attractiveness(image: np.ndarray, face: Face) -> dict | None:
+    """Rating on SCUT-FBP5500's 1-5 scale, averaged over the face and its mirror image.
+
+    Preprocessing matches the dataset's paper: a square face crop resized to 256,
+    centre 224 kept, RGB. The colour normalisation is built into the ONNX file by
+    scripts/convert_attractiveness_model.py, so the model takes 0-255 RGB values.
+    The rating reflects the taste of the dataset's 60 raters (see LIMITATIONS).
+    """
+    if not attractiveness_model.available:
+        return None
+    crop = crop_face(image, face, 256, margin=0.35)[16:240, 16:240]
+    scores = []
+    for view in (crop, cv2.flip(crop, 1)):
+        out = attractiveness_model.forward(cv2.dnn.blobFromImage(view, 1.0, (224, 224), (0, 0, 0), swapRB=True))
+        if out is None or out.size != 1:
+            return None
+        scores.append(float(out[0]))
+    score = float(np.clip(np.mean(scores), 1.0, 5.0))
+    return {"score": round(score, 2), "scale": "1-5",
+            "reliable": min(face.w, face.h) >= config.MIN_FACE_FOR_AGE}
 
 
 # ---------------------------------------------------------------------------
@@ -271,4 +297,5 @@ def describe_person(image: np.ndarray, face: Face) -> dict:
         "age": estimate_age(image, face),
         "smile": detect_smile(image, face) if expression_model.available else None,
         "outfit": measure_outfit(image, face),
+        "attractiveness": estimate_attractiveness(image, face),
     }

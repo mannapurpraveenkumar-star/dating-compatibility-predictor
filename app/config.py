@@ -4,6 +4,7 @@ Every limit lives here so it can be changed in one place and referenced by tests
 """
 
 from __future__ import annotations
+
 import os
 from pathlib import Path
 
@@ -40,6 +41,27 @@ AGE_REGRESSOR_PATH = MODEL_DIR / "genderage.onnx"
 AGE_REGRESSOR_SHA256 = "4fde69b1c810857b88c64a335084f1c3fe8f01246c9a191b48c7bb756d6652fb"
 AGE_REGRESSOR_URL = "https://github.com/yakhyo/facial-analysis/releases/download/v0.0.1/genderage.onnx"
 
+# Attractiveness rating (optional): a ResNet-18 trained on SCUT-FBP5500 (1-5 scale),
+# converted to ONNX once with scripts/convert_attractiveness_model.py (see that file).
+# Non-commercial research use only. Without the file the factor is simply skipped.
+ATTRACTIVENESS_MODEL_PATH = MODEL_DIR / "attractiveness_resnet18.onnx"
+
+# ---- Same person in several photos (multi-photo mode) ------------------
+# SFace (OpenCV Zoo, Apache-2.0) turns each face into 128 numbers; two faces from
+# DIFFERENT uploaded photos whose numbers are similar enough are treated as one
+# person, so they are counted and paired once. Faces are compared only with the
+# other faces in the same upload: no names, no database, nothing is stored.
+SFACE_MODEL_PATH = MODEL_DIR / "face_recognition_sface_2021dec.onnx"
+SFACE_MODEL_SHA256 = "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+SFACE_MODEL_URL = (
+    "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/"
+    "face_recognition_sface/face_recognition_sface_2021dec.onnx"
+)
+SAME_PERSON_CHECK_ENABLED = os.getenv("SAME_PERSON_CHECK", "1") == "1"
+SAME_PERSON_COSINE = 0.40      # cosine similarity (higher = more alike). OpenCV suggests 0.363; 0.40 adds a margin
+                               # (different people in our test photos peaked at 0.33, the same person scored 0.9+)
+SAME_PERSON_MIN_FACE = 24      # px; smaller faces are not compared
+
 # ---- Adult check (safeguard: possible children are never matched) --------
 MIN_FACE_FOR_AGE = 40          # px; smaller faces are too small to check age, so never matched
 MIN_SHARPNESS_FOR_AGE = 90     # Laplacian variance at 128 px; blurrier faces (incl. enlarged thumbnails) are refused
@@ -63,6 +85,8 @@ HEIGHT_COMPARABLE_SIZE_RATIO = 0.7  # faces must be similar in size (similar dis
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024          # 10 MB
 MAX_IMAGE_PIXELS = 16_000_000                # 16 MP: keeps memory under the free plan's 512 MB
 MIN_IMAGE_SIDE = 64                          # smaller images cannot hold usable faces
+MAX_PHOTOS = 5                               # photos per analysis in multi-photo mode
+WORKING_MAX_SIDE = 2400                      # larger photos are scaled down to this after checks
 ALLOWED_FORMATS = ("jpeg", "png", "webp")
 
 # ---- Detection -----------------------------------------------------------

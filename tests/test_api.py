@@ -108,7 +108,7 @@ def test_unexpected_error_returns_500_without_crashing(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("simulated bug")
 
-    monkeypatch.setattr(main, "analyse", boom)
+    monkeypatch.setattr(main, "analyse_photos", boom)
     r = post(load("group_four.jpg"))
     assert r.status_code == 500
     assert r.json()["detail"]["code"] == "internal_error"
@@ -144,3 +144,52 @@ def test_bad_age_labels_are_ignored():
     from app.main import parse_age_answers
     assert parse_age_answers("Person A, nonsense,<script>", "Person B,Person A") == {
         "Person A": "child", "Person B": "child"}
+
+
+def test_factors_endpoint():
+    body = client.get("/api/factors").json()
+    keys = [f["key"] for f in body["factors"]]
+    assert keys[:2] == ["age", "attractiveness"] and "closeness" in keys
+    assert body["min_match_score"] == 35
+
+
+def test_weights_are_applied(no_gender_rule):
+    import json
+    data = {"weights": json.dumps({"closeness": 50, "age": 0})}
+    body = client.post("/api/analyse", files={"photo": ("g.jpg", load("group_four.jpg"), "image/jpeg")},
+                       data=data).json()
+    assert body["weights"]["closeness"] == 50 and body["weights"]["age"] == 0
+    first = body["pair_scores"][0]["breakdown"]
+    assert any(b["feature"] == "closeness" and b["points"] for b in first)
+
+
+def test_bad_weights_fall_back_to_defaults():
+    body = client.post("/api/analyse", files={"photo": ("g.jpg", load("group_four.jpg"), "image/jpeg")},
+                       data={"weights": "not json"}).json()
+    from app.matching import DEFAULT_WEIGHTS
+    assert body["weights"] == DEFAULT_WEIGHTS
+
+
+def test_two_photos_form_one_group(no_gender_rule):
+    files = [("photo", ("a.jpg", load("group_four.jpg"), "image/jpeg")),
+             ("photo", ("b.jpg", load("single_face.jpg"), "image/jpeg"))]
+    body = client.post("/api/analyse", files=files).json()
+    assert body["photo_count"] == 2 and body["face_count"] == 5 and body["pair_count"] == 10
+    assert len(body["annotated_images"]) == 2
+    assert [f["photo"] for f in body["faces"]] == [1, 1, 1, 1, 2]
+    assert body["faces"][4]["label"] == "Person E"
+    cross = [p for p in body["pair_scores"] if "Person E" in (p["a"], p["b"])]
+    assert len(cross) == 4 and all(p["same_photo"] is False for p in cross)
+
+
+def test_too_many_photos():
+    files = [("photo", (f"{i}.jpg", load("single_face.jpg"), "image/jpeg")) for i in range(6)]
+    r = client.post("/api/analyse", files=files)
+    assert r.status_code == 400 and r.json()["detail"]["code"] == "too_many_photos"
+
+
+def test_bad_second_photo_is_named():
+    files = [("photo", ("a.jpg", load("single_face.jpg"), "image/jpeg")),
+             ("photo", ("b.jpg", b"not an image" * 20, "image/jpeg"))]
+    r = client.post("/api/analyse", files=files)
+    assert r.status_code == 415 and r.json()["detail"]["message"].startswith("Photo 2:")
